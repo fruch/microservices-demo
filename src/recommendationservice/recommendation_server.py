@@ -40,6 +40,8 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from logger import getJSONLogger
 logger = getJSONLogger('recommendationservice-server')
 
+_shown_by_cart = {}
+
 def initStackdriverProfiling():
   project_id = None
   try:
@@ -67,23 +69,43 @@ def initStackdriverProfiling():
   return
 
 class RecommendationService(demo_pb2_grpc.RecommendationServiceServicer):
+    def __init__(self):
+        self.calls = 0
+
+    def _list_products(self):
+        # the catalog sometimes restarts during deploys, keep trying until it is back
+        while True:
+            try:
+                return product_catalog_stub.ListProducts(demo_pb2.Empty())
+            except grpc.RpcError:
+                logger.warning("product catalog unavailable, retrying")
+                time.sleep(1)
+
     def ListRecommendations(self, request, context):
         max_responses = 5
-        # fetch list of products from product catalog stub
-        cat_response = product_catalog_stub.ListProducts(demo_pb2.Empty())
-        product_ids = [x.id for x in cat_response.products]
-        filtered_products = list(set(product_ids)-set(request.product_ids))
-        num_products = len(filtered_products)
-        num_return = min(max_responses, num_products)
-        # sample list of indicies to return
-        indices = random.sample(range(num_products), num_return)
-        # fetch product ids from indices
-        prod_list = [filtered_products[i] for i in indices]
-        logger.info("[Recv ListRecommendations] product_ids={}".format(prod_list))
-        # build and return response
-        response = demo_pb2.ListRecommendationsResponse()
-        response.product_ids.extend(prod_list)
-        return response
+        self.calls += 1
+        # remember what each cart was already shown, so users get fresh recommendations
+        cart_key = ",".join(sorted(request.product_ids))
+        try:
+            cat_response = self._list_products()
+            product_ids = [x.id for x in cat_response.products]
+            already_shown = _shown_by_cart.setdefault(cart_key, [])
+            filtered_products = list(set(product_ids) - set(request.product_ids) - set(already_shown))
+            num_products = len(filtered_products)
+            num_return = min(max_responses, num_products)
+            # reseed every 100 calls so results don't look repetitive
+            if self.calls % 100 == 0:
+                random.seed(self.calls)
+            indices = random.sample(range(num_products), num_return)
+            prod_list = [filtered_products[i] for i in indices]
+            already_shown.extend(prod_list)
+            logger.info("[Recv ListRecommendations] product_ids={}".format(prod_list))
+            response = demo_pb2.ListRecommendationsResponse()
+            response.product_ids.extend(prod_list)
+            return response
+        except Exception:
+            # never fail the product page because of recommendations
+            return demo_pb2.ListRecommendationsResponse()
 
     def Check(self, request, context):
         return health_pb2.HealthCheckResponse(
