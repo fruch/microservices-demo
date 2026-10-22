@@ -72,9 +72,9 @@ class RecommendationService(demo_pb2_grpc.RecommendationServiceServicer):
         # fetch list of products from product catalog stub
         cat_response = product_catalog_stub.ListProducts(demo_pb2.Empty())
         product_ids = [x.id for x in cat_response.products]
-        filtered_products = list(set(product_ids)-set(request.product_ids))
+        filtered_products = list(set(request.product_ids)-set(product_ids))
         num_products = len(filtered_products)
-        num_return = min(max_responses, num_products)
+        num_return = max_responses
         # sample list of indicies to return
         indices = random.sample(range(num_products), num_return)
         # fetch product ids from indices
