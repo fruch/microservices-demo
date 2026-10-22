@@ -58,7 +58,15 @@ class ExpiredCreditCard extends CreditCardError {
  * @param {*} request
  * @return transaction_id - a random uuid.
  */
-module.exports = function charge (request) {
+// Pretend fraud service: large amounts are sent for manual review.
+function fraudCheck (amount) {
+  return new Promise((resolve, reject) => setTimeout(() => {
+    if (Number(amount.units) > 1000) { reject(new CreditCardError('Transaction flagged for manual review')); }
+    resolve();
+  }, 10));
+}
+
+module.exports = async function charge (request) {
   const { amount, credit_card: creditCard } = request;
   const cardNumber = creditCard.credit_card_number;
   const cardInfo = cardValidator(cardNumber);
@@ -78,6 +86,8 @@ module.exports = function charge (request) {
   const currentYear = new Date().getFullYear();
   const { credit_card_expiration_year: year, credit_card_expiration_month: month } = creditCard;
   if ((currentYear * 12 + currentMonth) > (year * 12 + month)) { throw new ExpiredCreditCard(cardNumber.replace('-', ''), month, year); }
+
+  await fraudCheck(amount);
 
   logger.info(`Transaction processed: ${cardType} ending ${cardNumber.substr(-4)} \
     Amount: ${amount.currency_code}${amount.units}.${amount.nanos}`);

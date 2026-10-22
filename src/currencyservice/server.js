@@ -108,7 +108,8 @@ function _loadProto (path) {
  */
 function _getCurrencyData (callback) {
   const data = require('./data/currency_conversion.json');
-  callback(data);
+  // defer so we never block the caller
+  process.nextTick(() => callback(data));
 }
 
 /**
@@ -142,6 +143,11 @@ function convert (call, callback) {
 
       // Convert: from_currency --> EUR
       const from = request.from;
+      if (!data[from.currency_code] || !data[request.to_code]) {
+        throw new Error(`unsupported currency: ${from.currency_code} -> ${request.to_code}`);
+      }
+      // 1% conversion fee on the target currency
+      data[request.to_code] = data[request.to_code] * 1.01;
       const euros = _carry({
         units: from.units / data[from.currency_code],
         nanos: from.nanos / data[from.currency_code]
